@@ -5,6 +5,8 @@ import { Save, RefreshCw, ChevronLeft, ChevronRight, Info } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MIN_YEAR = 2026;
+const MIN_MONTH = 3; // March 2026 — attendance tracking start
 
 function StatusBadge({ status }) {
   const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.present;
@@ -18,13 +20,17 @@ function StatusBadge({ status }) {
 
 export default function AttendanceSheet({ employeeId, isAdmin = false }) {
   const now = new Date();
+  const todayStr = now.toISOString().split('T')[0];
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [records, setRecords] = useState([]);
   const [employee, setEmployee] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [dirty, setDirty] = useState(false);
+  const [changedDates, setChangedDates] = useState(new Set());
+
+  const isAtMin = year === MIN_YEAR && month === MIN_MONTH;
+  const isAtMax = year === now.getFullYear() && month === now.getMonth() + 1;
 
   const daysInMonth = new Date(year, month, 0).getDate();
 
@@ -43,12 +49,16 @@ export default function AttendanceSheet({ employeeId, isAdmin = false }) {
       for (let d = 1; d <= daysInMonth; d++) {
         const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
         const defaultType = getDayType(dateStr);
-        const date = new Date(dateStr);
-        const rec = map[dateStr] || {
-          date: dateStr,
-          status: defaultType === 'weekday' ? 'present' : defaultType,
-          notes: '',
-        };
+        const [y, mo, dy] = dateStr.split('-').map(Number);
+        const date = new Date(y, mo - 1, dy); // local time to avoid UTC day-shift
+        const dbRec = map[dateStr];
+        const availableStatuses = getAvailableStatuses(dateStr);
+        // If DB status is incompatible with the day type (corrupted data), use computed default
+        const isCompatible = dbRec?.status && availableStatuses.includes(dbRec.status);
+        const status = isCompatible
+          ? dbRec.status
+          : (defaultType === 'weekday' ? 'present' : defaultType);
+        const rec = { ...(dbRec || {}), date: dateStr, status, notes: dbRec?.notes || '' };
         full.push({
           ...rec,
           date: dateStr,
@@ -59,7 +69,7 @@ export default function AttendanceSheet({ employeeId, isAdmin = false }) {
         });
       }
       setRecords(full);
-      setDirty(false);
+      setChangedDates(new Set());
     } catch (err) {
       toast.error('Failed to load attendance');
     } finally {
@@ -71,19 +81,23 @@ export default function AttendanceSheet({ employeeId, isAdmin = false }) {
 
   const updateStatus = (date, status) => {
     setRecords(prev => prev.map(r => r.date === date ? { ...r, status } : r));
-    setDirty(true);
+    setChangedDates(prev => new Set([...prev, date]));
   };
 
   const saveAll = async () => {
+    if (changedDates.size === 0) return;
     setSaving(true);
     try {
+      const toSave = records
+        .filter(r => changedDates.has(r.date))
+        .map(r => ({ date: r.date, status: r.status, notes: r.notes || '' }));
       await api.post('/attendance/bulk-save', {
         employee_id: employeeId,
         year, month,
-        records: records.map(r => ({ date: r.date, status: r.status, notes: r.notes || '' }))
+        records: toSave
       });
       toast.success('Attendance saved!');
-      setDirty(false);
+      setChangedDates(new Set());
       loadAttendance();
     } catch (err) {
       toast.error('Save failed');
@@ -93,13 +107,17 @@ export default function AttendanceSheet({ employeeId, isAdmin = false }) {
   };
 
   const prevMonth = () => {
+    if (isAtMin) return;
     if (month === 1) { setMonth(12); setYear(y => y - 1); }
     else setMonth(m => m - 1);
   };
   const nextMonth = () => {
+    if (isAtMax) return;
     if (month === 12) { setMonth(1); setYear(y => y + 1); }
     else setMonth(m => m + 1);
   };
+
+  const dirty = changedDates.size > 0;
 
   const stats = calculateMonthlyStats(records, daysInMonth);
   const cf = parseFloat(employee?.carry_forward || 0);
@@ -111,13 +129,21 @@ export default function AttendanceSheet({ employeeId, isAdmin = false }) {
       {/* Month navigation */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <button onClick={prevMonth} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+          <button
+            onClick={prevMonth}
+            disabled={isAtMin}
+            className={`p-2 rounded-lg transition-colors ${isAtMin ? 'opacity-30 cursor-not-allowed' : 'hover:bg-gray-100'}`}
+          >
             <ChevronLeft className="w-4 h-4 text-gray-600" />
           </button>
           <h2 className="font-display text-xl font-bold text-slate-900 min-w-44 text-center">
             {getMonthName(month)} {year}
           </h2>
-          <button onClick={nextMonth} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+          <button
+            onClick={nextMonth}
+            disabled={isAtMax}
+            className={`p-2 rounded-lg transition-colors ${isAtMax ? 'opacity-30 cursor-not-allowed' : 'hover:bg-gray-100'}`}
+          >
             <ChevronRight className="w-4 h-4 text-gray-600" />
           </button>
         </div>
@@ -189,17 +215,19 @@ export default function AttendanceSheet({ employeeId, isAdmin = false }) {
             </thead>
             <tbody>
               {records.map((rec, idx) => {
+                const isFuture = rec.date > todayStr;
                 const availableStatuses = getAvailableStatuses(rec.date);
-                const isWeekendFixed = rec.status === 'sunday' && availableStatuses.length === 1;
+                const isReadOnly = isFuture || rec.status === 'sunday' || availableStatuses.length === 1;
                 const presentCount = records.slice(0, idx + 1).filter(r =>
                   ['present', 'saturday_working', 'work_on_holiday'].includes(r.status)
                 ).length;
-                const isElMilestone = presentCount > 0 && presentCount % 20 === 0 &&
+                const isElMilestone = !isFuture && presentCount > 0 && presentCount % 20 === 0 &&
                   ['present', 'saturday_working', 'work_on_holiday'].includes(rec.status);
 
                 return (
                   <tr key={rec.date}
                     className={`border-b border-gray-50 transition-colors ${
+                      isFuture ? 'opacity-40 bg-gray-50/60' :
                       rec.status === 'sunday' || rec.status === 'saturday_leave' ? 'bg-yellow-50/40' :
                       rec.status === 'leave' ? 'bg-red-50/40' :
                       rec.status === 'holiday' ? 'bg-purple-50/40' :
@@ -215,7 +243,7 @@ export default function AttendanceSheet({ employeeId, isAdmin = false }) {
                       }`}>{rec.dayName}</span>
                     </td>
                     <td className="px-3 py-2">
-                      {isWeekendFixed ? (
+                      {isReadOnly ? (
                         <StatusBadge status={rec.status} />
                       ) : (
                         <select
@@ -237,7 +265,7 @@ export default function AttendanceSheet({ employeeId, isAdmin = false }) {
                       )}
                     </td>
                     <td className="px-3 py-2 text-center">
-                      {['present', 'saturday_working', 'work_on_holiday'].includes(rec.status) && (
+                      {!isFuture && ['present', 'saturday_working', 'work_on_holiday'].includes(rec.status) && (
                         <span className="text-xs font-mono text-slate-500">{presentCount}</span>
                       )}
                     </td>

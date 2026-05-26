@@ -3,13 +3,18 @@ const db = require('../config/db');
 const { authMiddleware, adminMiddleware } = require('../middleware/auth');
 const router = express.Router();
 
+// Parse date string as local midnight to avoid UTC timezone day-shift
+function parseLocalDate(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
 // Helper: Get day type for a date
 function getDayType(dateStr) {
-  const date = new Date(dateStr);
+  const date = parseLocalDate(dateStr);
   const day = date.getDay(); // 0=Sun, 6=Sat
   if (day === 0) return 'sunday';
   if (day === 6) {
-    // Get week number within the month
     const firstDay = new Date(date.getFullYear(), date.getMonth(), 1);
     const saturdayCount = Math.ceil((date.getDate() + firstDay.getDay()) / 7);
     // 1st and 3rd Saturday = leave, 2nd, 4th, 5th = working
@@ -21,10 +26,67 @@ function getDayType(dateStr) {
 
 // Helper: Get nth Saturday of month
 function getSaturdayNumber(dateStr) {
-  const date = new Date(dateStr);
+  const date = parseLocalDate(dateStr);
   const firstDay = new Date(date.getFullYear(), date.getMonth(), 1);
   return Math.ceil((date.getDate() + firstDay.getDay()) / 7);
 }
+
+// Get CF pool breakdown for an employee (EL earned per month + Work on Holiday)
+router.get('/cf-pools/:employeeId', authMiddleware, async (req, res) => {
+  const { employeeId } = req.params;
+  if (req.user.role !== 'admin' && req.user.id != employeeId) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+  try {
+    const MONTH_NAMES = ['','January','February','March','April','May','June',
+                         'July','August','September','October','November','December'];
+
+    // EL earned per month from monthly_summary
+    const [summaries] = await db.query(
+      `SELECT year, month, el_earned FROM monthly_summary
+       WHERE employee_id = ? AND el_earned > 0 ORDER BY year, month`,
+      [employeeId]
+    );
+
+    // Total work_on_holiday days ever worked
+    const [wohRows] = await db.query(
+      `SELECT COUNT(*) AS cnt FROM attendance WHERE employee_id = ? AND status = 'work_on_holiday'`,
+      [employeeId]
+    );
+    const wohEarned = parseInt(wohRows[0].cnt) || 0;
+
+    // How many days already used from each leave_source
+    const [usageRows] = await db.query(
+      `SELECT leave_source, COUNT(*) AS used FROM attendance
+       WHERE employee_id = ? AND status = 'leave' AND leave_source IS NOT NULL
+       GROUP BY leave_source`,
+      [employeeId]
+    );
+    const usageMap = {};
+    usageRows.forEach(r => { usageMap[r.leave_source] = parseInt(r.used) || 0; });
+
+    const pools = [];
+
+    for (const s of summaries) {
+      const key = `el_${s.year}_${String(s.month).padStart(2, '0')}`;
+      const available = (parseFloat(s.el_earned) || 0) - (usageMap[key] || 0);
+      if (available > 0) {
+        pools.push({ key, label: `EL (${MONTH_NAMES[s.month]} ${s.year})`, available });
+      }
+    }
+
+    if (wohEarned > 0) {
+      const wohAvail = wohEarned - (usageMap['work_on_holiday'] || 0);
+      if (wohAvail > 0) {
+        pools.push({ key: 'work_on_holiday', label: 'Work on Holiday', available: wohAvail });
+      }
+    }
+
+    res.json({ pools, total: pools.reduce((s, p) => s + p.available, 0) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Get attendance for employee for a month
 router.get('/month/:employeeId/:year/:month', authMiddleware, async (req, res) => {
@@ -88,6 +150,20 @@ router.post('/save', authMiddleware, async (req, res) => {
     return res.status(403).json({ error: 'Access denied' });
   }
 
+  if (getDayType(date) === 'sunday') {
+    return res.status(400).json({ error: 'Cannot modify Sunday attendance' });
+  }
+
+  const validStatuses = {
+    saturday_leave: ['saturday_leave', 'saturday_working', 'work_on_holiday'],
+    saturday_working: ['saturday_working', 'saturday_leave', 'work_on_holiday'],
+    weekday: ['present', 'leave', 'holiday', 'work_on_holiday', 'absent'],
+  };
+  const dayType = getDayType(date);
+  if (validStatuses[dayType] && !validStatuses[dayType].includes(status)) {
+    return res.status(400).json({ error: 'Invalid status for this day type' });
+  }
+
   try {
     // Check if record exists
     const [existing] = await db.query(
@@ -129,19 +205,32 @@ router.post('/bulk-save', authMiddleware, async (req, res) => {
     await conn.beginTransaction();
 
     for (const record of records) {
+      const dayType = getDayType(record.date);
+      // Validate status is compatible with the day type before saving
+      const validStatuses = {
+        sunday: ['sunday'],
+        saturday_leave: ['saturday_leave', 'saturday_working', 'work_on_holiday'],
+        saturday_working: ['saturday_working', 'saturday_leave', 'work_on_holiday'],
+        weekday: ['present', 'leave', 'holiday', 'work_on_holiday', 'absent'],
+      };
+      if (!validStatuses[dayType]?.includes(record.status)) continue;
+
+      // leave_source only relevant for 'leave' status; clear it for all other statuses
+      const leaveSource = record.status === 'leave' ? (record.leave_source || null) : null;
+
       const [existing] = await conn.query(
         'SELECT id FROM attendance WHERE employee_id = ? AND date = ?',
         [employee_id, record.date]
       );
       if (existing.length) {
         await conn.query(
-          'UPDATE attendance SET status = ?, notes = ? WHERE employee_id = ? AND date = ?',
-          [record.status, record.notes || '', employee_id, record.date]
+          'UPDATE attendance SET status = ?, notes = ?, leave_source = ? WHERE employee_id = ? AND date = ?',
+          [record.status, record.notes || '', leaveSource, employee_id, record.date]
         );
       } else {
         await conn.query(
-          'INSERT INTO attendance (employee_id, date, status, notes) VALUES (?, ?, ?, ?)',
-          [employee_id, record.date, record.status, record.notes || '']
+          'INSERT INTO attendance (employee_id, date, status, notes, leave_source) VALUES (?, ?, ?, ?, ?)',
+          [employee_id, record.date, record.status, record.notes || '', leaveSource]
         );
       }
     }

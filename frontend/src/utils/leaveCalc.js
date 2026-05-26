@@ -1,6 +1,12 @@
+// Parse date string as local midnight to avoid UTC timezone shift
+function parseLocalDate(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
 // Get day type for a given date
 export function getDayType(dateStr) {
-  const date = new Date(dateStr);
+  const date = parseLocalDate(dateStr);
   const day = date.getDay(); // 0=Sun, 6=Sat
   if (day === 0) return 'sunday';
   if (day === 6) {
@@ -13,7 +19,7 @@ export function getDayType(dateStr) {
 
 // Get nth Saturday number in month
 export function getSaturdayNumber(dateStr) {
-  const date = new Date(dateStr);
+  const date = parseLocalDate(dateStr);
   const firstDay = new Date(date.getFullYear(), date.getMonth(), 1);
   return Math.ceil((date.getDate() + firstDay.getDay()) / 7);
 }

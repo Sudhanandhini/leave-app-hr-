@@ -23,12 +23,14 @@ CREATE TABLE IF NOT EXISTS attendance (
   date DATE NOT NULL,
   status ENUM('present', 'sunday', 'saturday_leave', 'saturday_working', 'holiday', 'work_on_holiday', 'leave', 'absent') NOT NULL,
   el_earned DECIMAL(3,1) DEFAULT 0,
+  leave_source VARCHAR(30) DEFAULT NULL, -- e.g. 'el_2026_03', 'el_2026_04', 'work_on_holiday', 'unpaid'
   notes VARCHAR(255),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE,
   UNIQUE KEY unique_attendance (employee_id, date)
 );
+-- Run this on existing databases: ALTER TABLE attendance ADD COLUMN leave_source VARCHAR(30) DEFAULT NULL;
 
 -- Monthly summary table
 CREATE TABLE IF NOT EXISTS monthly_summary (
