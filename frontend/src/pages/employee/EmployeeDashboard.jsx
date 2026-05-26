@@ -1,0 +1,122 @@
+import { useState, useEffect } from 'react';
+import { useAuth } from '../../context/AuthContext';
+import api from '../../utils/api';
+import { getMonthName, calculateMonthlyStats, getDayType } from '../../utils/leaveCalc';
+import { CalendarDays, TrendingUp, Clock, AlertTriangle } from 'lucide-react';
+
+export default function EmployeeDashboard() {
+  const { user, refreshUser } = useAuth();
+  const now = new Date();
+  const [summary, setSummary] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadSummary();
+    refreshUser();
+  }, []);
+
+  const loadSummary = async () => {
+    try {
+      const res = await api.get(`/attendance/summary/${user.id}/${now.getFullYear()}/${now.getMonth() + 1}`);
+      setSummary(res.data);
+    } catch {}
+    setLoading(false);
+  };
+
+  const cf = parseFloat(user?.carry_forward || 0);
+  const leaveDays = summary?.leave_days || 0;
+  const cfUsed = Math.min(leaveDays, cf);
+  const salaryDeduct = Math.max(0, leaveDays - cfUsed);
+
+  return (
+    <div className="p-6 space-y-6 max-w-5xl mx-auto">
+      {/* Welcome */}
+      <div className="bg-gradient-to-r from-blue-600 to-blue-800 rounded-2xl p-6 text-white">
+        <div className="text-blue-200 text-sm font-medium mb-1">Welcome back</div>
+        <h1 className="font-display text-2xl font-bold">{user?.name}</h1>
+        <div className="flex items-center gap-4 mt-3 text-sm text-blue-200">
+          <span>{user?.department}</span>
+          <span>•</span>
+          <span>Carry Forward: <strong className="text-white">{cf} days</strong></span>
+        </div>
+      </div>
+
+      {/* Month overview */}
+      <div>
+        <h2 className="font-semibold text-slate-800 mb-3">
+          {getMonthName(now.getMonth() + 1)} {now.getFullYear()} — Summary
+        </h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="card text-center">
+            <div className="w-10 h-10 bg-green-100 rounded-xl flex items-center justify-center mx-auto mb-2">
+              <CalendarDays className="w-5 h-5 text-green-600" />
+            </div>
+            <div className="text-2xl font-display font-bold text-slate-900">{summary?.present_days || 0}</div>
+            <div className="text-xs text-slate-500 font-medium">Days Present</div>
+          </div>
+          <div className="card text-center">
+            <div className="w-10 h-10 bg-red-100 rounded-xl flex items-center justify-center mx-auto mb-2">
+              <AlertTriangle className="w-5 h-5 text-red-500" />
+            </div>
+            <div className="text-2xl font-display font-bold text-slate-900">{leaveDays}</div>
+            <div className="text-xs text-slate-500 font-medium">Leave Days</div>
+          </div>
+          <div className="card text-center">
+            <div className="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center mx-auto mb-2">
+              <TrendingUp className="w-5 h-5 text-purple-600" />
+            </div>
+            <div className="text-2xl font-display font-bold text-slate-900">{summary?.el_earned || 0}</div>
+            <div className="text-xs text-slate-500 font-medium">EL Earned</div>
+          </div>
+          <div className="card text-center">
+            <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center mx-auto mb-2">
+              <Clock className="w-5 h-5 text-blue-600" />
+            </div>
+            <div className="text-2xl font-display font-bold text-slate-900">{cf}</div>
+            <div className="text-xs text-slate-500 font-medium">Carry Forward</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Leave impact */}
+      {leaveDays > 0 && (
+        <div className={`rounded-2xl p-5 border ${salaryDeduct > 0 ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
+          <h3 className={`font-semibold mb-3 ${salaryDeduct > 0 ? 'text-red-800' : 'text-green-800'}`}>
+            Leave Impact on Salary
+          </h3>
+          <div className="space-y-1.5 text-sm">
+            <div className="flex justify-between">
+              <span className="text-slate-600">Leave days taken</span>
+              <span className="font-semibold">{leaveDays}</span>
+            </div>
+            {cfUsed > 0 && (
+              <div className="flex justify-between text-blue-700">
+                <span>Covered by carry forward</span>
+                <span className="font-semibold">-{cfUsed}</span>
+              </div>
+            )}
+            <div className={`flex justify-between font-bold pt-1.5 border-t ${salaryDeduct > 0 ? 'text-red-700 border-red-200' : 'text-green-700 border-green-200'}`}>
+              <span>Days to deduct from salary</span>
+              <span>{salaryDeduct}</span>
+            </div>
+          </div>
+          {salaryDeduct === 0 && (
+            <p className="text-green-700 text-xs mt-2">✓ All leaves covered by carry forward — no salary deduction!</p>
+          )}
+        </div>
+      )}
+
+      {/* EL explanation */}
+      <div className="card bg-gradient-to-br from-purple-50 to-indigo-50 border-purple-100">
+        <h3 className="font-semibold text-purple-900 mb-2">How Earned Leave Works</h3>
+        <ul className="text-sm text-purple-700 space-y-1">
+          <li>• Every <strong>20 working days</strong> = 1 Earned Leave (EL)</li>
+          <li>• EL is automatically added to your <strong>Carry Forward</strong></li>
+          <li>• When you take leave, carry forward is <strong>deducted first</strong></li>
+          <li>• Remaining leave days (after CF) are <strong>deducted from salary</strong></li>
+          <li>• 1st & 3rd Saturdays are off — 2nd, 4th, 5th Saturdays are working days</li>
+        </ul>
+      </div>
+    </div>
+  );
+}

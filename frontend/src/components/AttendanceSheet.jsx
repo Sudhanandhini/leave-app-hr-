@@ -1,0 +1,263 @@
+import { useState, useEffect, useCallback } from 'react';
+import api from '../utils/api';
+import { getDayType, getAvailableStatuses, STATUS_CONFIG, calculateMonthlyStats, getMonthName } from '../utils/leaveCalc';
+import { Save, RefreshCw, ChevronLeft, ChevronRight, Info } from 'lucide-react';
+import toast from 'react-hot-toast';
+
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function StatusBadge({ status }) {
+  const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.present;
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${cfg.color}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+      {cfg.label}
+    </span>
+  );
+}
+
+export default function AttendanceSheet({ employeeId, isAdmin = false }) {
+  const now = new Date();
+  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [records, setRecords] = useState([]);
+  const [employee, setEmployee] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
+
+  const daysInMonth = new Date(year, month, 0).getDate();
+
+  const loadAttendance = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await api.get(`/attendance/month/${employeeId}/${year}/${month}`);
+      setEmployee(res.data.employee);
+
+      // Build full month records
+      const fetched = res.data.records;
+      const map = {};
+      fetched.forEach(r => { map[r.date] = r; });
+
+      const full = [];
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        const defaultType = getDayType(dateStr);
+        const date = new Date(dateStr);
+        const rec = map[dateStr] || {
+          date: dateStr,
+          status: defaultType === 'weekday' ? 'present' : defaultType,
+          notes: '',
+        };
+        full.push({
+          ...rec,
+          date: dateStr,
+          dayName: DAY_NAMES[date.getDay()],
+          dayNum: d,
+          isWeekend: date.getDay() === 0 || date.getDay() === 6,
+          defaultType,
+        });
+      }
+      setRecords(full);
+      setDirty(false);
+    } catch (err) {
+      toast.error('Failed to load attendance');
+    } finally {
+      setLoading(false);
+    }
+  }, [employeeId, year, month, daysInMonth]);
+
+  useEffect(() => { loadAttendance(); }, [loadAttendance]);
+
+  const updateStatus = (date, status) => {
+    setRecords(prev => prev.map(r => r.date === date ? { ...r, status } : r));
+    setDirty(true);
+  };
+
+  const saveAll = async () => {
+    setSaving(true);
+    try {
+      await api.post('/attendance/bulk-save', {
+        employee_id: employeeId,
+        year, month,
+        records: records.map(r => ({ date: r.date, status: r.status, notes: r.notes || '' }))
+      });
+      toast.success('Attendance saved!');
+      setDirty(false);
+      loadAttendance();
+    } catch (err) {
+      toast.error('Save failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const prevMonth = () => {
+    if (month === 1) { setMonth(12); setYear(y => y - 1); }
+    else setMonth(m => m - 1);
+  };
+  const nextMonth = () => {
+    if (month === 12) { setMonth(1); setYear(y => y + 1); }
+    else setMonth(m => m + 1);
+  };
+
+  const stats = calculateMonthlyStats(records, daysInMonth);
+  const cf = parseFloat(employee?.carry_forward || 0);
+  const cfUsed = Math.min(stats.leaveDays, cf);
+  const salaryDeductDays = Math.max(0, stats.leaveDays - cfUsed);
+
+  return (
+    <div className="space-y-5">
+      {/* Month navigation */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <button onClick={prevMonth} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+            <ChevronLeft className="w-4 h-4 text-gray-600" />
+          </button>
+          <h2 className="font-display text-xl font-bold text-slate-900 min-w-44 text-center">
+            {getMonthName(month)} {year}
+          </h2>
+          <button onClick={nextMonth} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+            <ChevronRight className="w-4 h-4 text-gray-600" />
+          </button>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={loadAttendance} className="btn-secondary flex items-center gap-1.5">
+            <RefreshCw className="w-3.5 h-3.5" /> Refresh
+          </button>
+          {dirty && (
+            <button onClick={saveAll} disabled={saving} className="btn-primary flex items-center gap-1.5">
+              <Save className="w-3.5 h-3.5" />
+              {saving ? 'Saving...' : 'Save Changes'}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Stats row */}
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+        {[
+          { label: 'Total Days', val: stats.totalDays, cls: 'bg-slate-100 text-slate-800' },
+          { label: 'Sundays', val: stats.sundays, cls: 'bg-yellow-100 text-yellow-800' },
+          { label: 'Sat (Leave)', val: stats.satLeave, cls: 'bg-yellow-100 text-yellow-800' },
+          { label: 'Present', val: stats.presentDays, cls: 'bg-green-100 text-green-800' },
+          { label: 'Leave', val: stats.leaveDays, cls: 'bg-red-100 text-red-800' },
+          { label: 'EL Earned', val: stats.elEarned, cls: 'bg-purple-100 text-purple-800' },
+          { label: 'CF Available', val: cf, cls: 'bg-blue-100 text-blue-800' },
+        ].map(({ label, val, cls }) => (
+          <div key={label} className={`${cls} rounded-xl p-3 text-center`}>
+            <div className="text-2xl font-display font-bold">{val}</div>
+            <div className="text-xs font-medium mt-0.5 opacity-75">{label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Formula display like image */}
+      <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-sm font-mono">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-slate-700">
+          <div><span className="text-slate-400">Total day:</span> {daysInMonth} - ({stats.sundays} + {stats.satLeave}) = <strong>{daysInMonth - stats.sundays - stats.satLeave}</strong></div>
+          <div><span className="text-slate-400">Present day:</span> <strong>{stats.presentDays}</strong></div>
+          <div><span className="text-slate-400">EL (1 per 20):</span> <strong className="text-purple-700">+{stats.elEarned}</strong></div>
+          <div className={salaryDeductDays > 0 ? 'text-red-600' : 'text-green-600'}>
+            <span className="text-slate-400">Salary deduct:</span> <strong>{salaryDeductDays} day{salaryDeductDays !== 1 ? 's' : ''}</strong>
+          </div>
+        </div>
+        {stats.leaveDays > 0 && (
+          <div className="mt-2 pt-2 border-t border-slate-200 text-slate-600">
+            Leave: {stats.leaveDays} day{stats.leaveDays > 1 ? 's' : ''} taken
+            {cfUsed > 0 && <span className="text-blue-600"> → {cfUsed} covered by carry forward</span>}
+            {salaryDeductDays > 0 && <span className="text-red-600"> → {salaryDeductDays} to deduct from salary</span>}
+          </div>
+        )}
+      </div>
+
+      {/* Attendance grid */}
+      {loading ? (
+        <div className="flex items-center justify-center h-48 text-slate-400">
+          <RefreshCw className="w-5 h-5 animate-spin mr-2" /> Loading...
+        </div>
+      ) : (
+        <div className="card p-0 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 border-b border-gray-100">
+              <tr>
+                <th className="px-3 py-3 text-left font-semibold text-slate-600 w-24">Date</th>
+                <th className="px-3 py-3 text-left font-semibold text-slate-600 w-16">Day</th>
+                <th className="px-3 py-3 text-left font-semibold text-slate-600">Status</th>
+                <th className="px-3 py-3 text-left font-semibold text-slate-600 w-12 text-center">#</th>
+              </tr>
+            </thead>
+            <tbody>
+              {records.map((rec, idx) => {
+                const availableStatuses = getAvailableStatuses(rec.date);
+                const isWeekendFixed = rec.status === 'sunday' && availableStatuses.length === 1;
+                const presentCount = records.slice(0, idx + 1).filter(r =>
+                  ['present', 'saturday_working', 'work_on_holiday'].includes(r.status)
+                ).length;
+                const isElMilestone = presentCount > 0 && presentCount % 20 === 0 &&
+                  ['present', 'saturday_working', 'work_on_holiday'].includes(rec.status);
+
+                return (
+                  <tr key={rec.date}
+                    className={`border-b border-gray-50 transition-colors ${
+                      rec.status === 'sunday' || rec.status === 'saturday_leave' ? 'bg-yellow-50/40' :
+                      rec.status === 'leave' ? 'bg-red-50/40' :
+                      rec.status === 'holiday' ? 'bg-purple-50/40' :
+                      isElMilestone ? 'bg-green-50/40' : 'hover:bg-gray-50'
+                    }`}>
+                    <td className="px-3 py-2 font-mono text-slate-600 text-xs">
+                      {rec.date}
+                    </td>
+                    <td className="px-3 py-2">
+                      <span className={`text-xs font-semibold ${
+                        rec.dayName === 'Sun' ? 'text-red-500' :
+                        rec.dayName === 'Sat' ? 'text-amber-600' : 'text-slate-500'
+                      }`}>{rec.dayName}</span>
+                    </td>
+                    <td className="px-3 py-2">
+                      {isWeekendFixed ? (
+                        <StatusBadge status={rec.status} />
+                      ) : (
+                        <select
+                          value={rec.status}
+                          onChange={e => updateStatus(rec.date, e.target.value)}
+                          className={`text-xs border rounded-lg px-2 py-1 font-medium focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer ${
+                            STATUS_CONFIG[rec.status]?.color || ''
+                          }`}
+                        >
+                          {availableStatuses.map(s => (
+                            <option key={s} value={s}>{STATUS_CONFIG[s]?.label || s}</option>
+                          ))}
+                        </select>
+                      )}
+                      {isElMilestone && (
+                        <span className="ml-2 text-xs text-green-600 font-semibold bg-green-100 px-2 py-0.5 rounded-full">
+                          +1 EL earned
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      {['present', 'saturday_working', 'work_on_holiday'].includes(rec.status) && (
+                        <span className="text-xs font-mono text-slate-500">{presentCount}</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Legend */}
+      <div className="flex flex-wrap gap-2">
+        {Object.entries(STATUS_CONFIG).map(([key, cfg]) => (
+          <span key={key} className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium border ${cfg.color}`}>
+            <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
+            {cfg.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
