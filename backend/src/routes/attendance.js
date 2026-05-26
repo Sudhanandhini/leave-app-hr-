@@ -66,6 +66,7 @@ router.get('/cf-pools/:employeeId', authMiddleware, async (req, res) => {
     usageRows.forEach(r => { usageMap[r.leave_source] = parseInt(r.used) || 0; });
 
     const pools = [];
+    const monthlyPresent = []; // { year, month, presentDays } — used by frontend for cross-month counter
     let wohTotal = 0;
 
     // Walk every month from March 2026 to current month
@@ -89,6 +90,8 @@ router.get('/cf-pools/:employeeId', authMiddleware, async (req, res) => {
         if (status === 'work_on_holiday') { presentDays++; wohTotal++; }
       }
 
+      monthlyPresent.push({ year: yr, month: mo, presentDays });
+
       const elEarned = Math.floor(presentDays / 20);
       if (elEarned > 0) {
         const key = `el_${yr}_${pad(mo)}`;
@@ -105,7 +108,7 @@ router.get('/cf-pools/:employeeId', authMiddleware, async (req, res) => {
       pools.push({ key: 'work_on_holiday', label: 'Work on Holiday', available: wohAvail });
     }
 
-    res.json({ pools, total: pools.reduce((s, p) => s + Math.max(0, p.available), 0) });
+    res.json({ pools, monthlyPresent, total: pools.reduce((s, p) => s + Math.max(0, p.available), 0) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

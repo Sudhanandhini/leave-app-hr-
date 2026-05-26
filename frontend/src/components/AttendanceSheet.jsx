@@ -29,7 +29,8 @@ export default function AttendanceSheet({ employeeId, isAdmin = false }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [changedDates, setChangedDates] = useState(new Set());
-  const [cfPools, setCfPools] = useState([]); // carry-forward pools from API
+  const [cfPools, setCfPools] = useState([]);
+  const [cfMonthlyPresent, setCfMonthlyPresent] = useState([]); // [{year,month,presentDays}]
 
   const isAtMin = year === MIN_YEAR && month === MIN_MONTH;
   const isAtMax = year === now.getFullYear() && month === now.getMonth() + 1;
@@ -40,6 +41,7 @@ export default function AttendanceSheet({ employeeId, isAdmin = false }) {
     try {
       const res = await api.get(`/attendance/cf-pools/${employeeId}`);
       setCfPools(res.data.pools || []);
+      setCfMonthlyPresent(res.data.monthlyPresent || []);
     } catch {}
   }, [employeeId]);
 
@@ -145,6 +147,11 @@ export default function AttendanceSheet({ employeeId, isAdmin = false }) {
   };
 
   const dirty = changedDates.size > 0;
+
+  // Sum of present days in all months BEFORE the currently viewed month (for cross-month counter)
+  const priorPresentDays = cfMonthlyPresent
+    .filter(m => m.year < year || (m.year === year && m.month < month))
+    .reduce((sum, m) => sum + m.presentDays, 0);
 
   // Compute real-time pool availability = saved pools minus any unsaved leave_source usages
   const unsavedUsages = records
@@ -280,10 +287,13 @@ export default function AttendanceSheet({ employeeId, isAdmin = false }) {
                 const isFuture = rec.date > todayStr;
                 const availableStatuses = getAvailableStatuses(rec.date);
                 const isReadOnly = isFuture || rec.status === 'sunday' || availableStatuses.length === 1;
-                const presentCount = records.slice(0, idx + 1).filter(r =>
+                const monthPresentCount = records.slice(0, idx + 1).filter(r =>
                   ['present', 'saturday_working', 'work_on_holiday'].includes(r.status)
                 ).length;
-                const isElMilestone = !isFuture && presentCount > 0 && presentCount % 20 === 0 &&
+                // Rolling count from March 2026 start — continues across month boundaries
+                const totalPresentCount = priorPresentDays + monthPresentCount;
+                const cycleCount = totalPresentCount % 20 === 0 ? 20 : totalPresentCount % 20;
+                const isElMilestone = !isFuture && totalPresentCount > 0 && totalPresentCount % 20 === 0 &&
                   ['present', 'saturday_working', 'work_on_holiday'].includes(rec.status);
 
                 // Pools available for this row's leave source picker (exclude already-used ones except self)
@@ -373,7 +383,9 @@ export default function AttendanceSheet({ employeeId, isAdmin = false }) {
                     </td>
                     <td className="px-3 py-2 text-center">
                       {!isFuture && ['present', 'saturday_working', 'work_on_holiday'].includes(rec.status) && (
-                        <span className="text-xs font-mono text-slate-500">{presentCount}</span>
+                        <span className={`text-xs font-mono ${isElMilestone ? 'text-green-600 font-bold' : 'text-slate-500'}`}>
+                          {cycleCount}
+                        </span>
                       )}
                     </td>
                   </tr>

@@ -32,7 +32,7 @@ export default function Layout({ children }) {
   };
 
   return (
-    <div className="min-h-screen flex bg-gray-50">
+    <div className="h-screen flex overflow-hidden bg-gray-50">
       {/* Mobile overlay */}
       {mobileOpen && (
         <div className="fixed inset-0 z-20 bg-black/50 lg:hidden" onClick={() => setMobileOpen(false)} />
@@ -40,7 +40,7 @@ export default function Layout({ children }) {
 
       {/* Sidebar */}
       <aside className={`
-        fixed top-0 left-0 h-full z-30 w-64 bg-slate-900 flex flex-col transition-transform duration-300
+        fixed top-0 left-0 h-screen z-30 w-64 bg-slate-900 flex flex-col transition-transform duration-300 flex-shrink-0
         lg:translate-x-0 lg:static lg:z-auto
         ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}
       `}>
@@ -95,16 +95,16 @@ export default function Layout({ children }) {
       </aside>
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
         {/* Top bar (mobile) */}
-        <header className="lg:hidden bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3">
+        <header className="lg:hidden bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 flex-shrink-0">
           <button onClick={() => setMobileOpen(true)} className="text-gray-600">
             <Menu className="w-5 h-5" />
           </button>
           <span className="font-display font-bold text-slate-900">LeaveTrack</span>
         </header>
 
-        <main className="flex-1 overflow-auto">
+        <main className="flex-1 overflow-y-auto">
           {children}
         </main>
       </div>
