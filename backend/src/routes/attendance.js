@@ -31,7 +31,8 @@ function getSaturdayNumber(dateStr) {
   return Math.ceil((date.getDate() + firstDay.getDay()) / 7);
 }
 
-// Get CF pool breakdown for an employee (EL earned per month + Work on Holiday)
+// Get CF pool breakdown — computes EL directly from attendance records + defaults.
+// Does NOT rely on monthly_summary so it works even when months were never explicitly saved.
 router.get('/cf-pools/:employeeId', authMiddleware, async (req, res) => {
   const { employeeId } = req.params;
   if (req.user.role !== 'admin' && req.user.id != employeeId) {
@@ -40,22 +41,21 @@ router.get('/cf-pools/:employeeId', authMiddleware, async (req, res) => {
   try {
     const MONTH_NAMES = ['','January','February','March','April','May','June',
                          'July','August','September','October','November','December'];
+    const today = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const todayStr = `${today.getFullYear()}-${pad(today.getMonth()+1)}-${pad(today.getDate())}`;
 
-    // EL earned per month from monthly_summary
-    const [summaries] = await db.query(
-      `SELECT year, month, el_earned FROM monthly_summary
-       WHERE employee_id = ? AND el_earned > 0 ORDER BY year, month`,
+    // All saved attendance records from March 2026 onwards.
+    // DATE_FORMAT avoids mysql2 Date-object timezone conversion.
+    const [allRecs] = await db.query(
+      `SELECT DATE_FORMAT(date, '%Y-%m-%d') AS d, status
+       FROM attendance WHERE employee_id = ? AND date >= '2026-03-01'`,
       [employeeId]
     );
+    const recMap = {};
+    allRecs.forEach(r => { recMap[r.d] = r.status; });
 
-    // Total work_on_holiday days ever worked
-    const [wohRows] = await db.query(
-      `SELECT COUNT(*) AS cnt FROM attendance WHERE employee_id = ? AND status = 'work_on_holiday'`,
-      [employeeId]
-    );
-    const wohEarned = parseInt(wohRows[0].cnt) || 0;
-
-    // How many days already used from each leave_source
+    // How many days already consumed from each leave_source
     const [usageRows] = await db.query(
       `SELECT leave_source, COUNT(*) AS used FROM attendance
        WHERE employee_id = ? AND status = 'leave' AND leave_source IS NOT NULL
@@ -66,23 +66,46 @@ router.get('/cf-pools/:employeeId', authMiddleware, async (req, res) => {
     usageRows.forEach(r => { usageMap[r.leave_source] = parseInt(r.used) || 0; });
 
     const pools = [];
+    let wohTotal = 0;
 
-    for (const s of summaries) {
-      const key = `el_${s.year}_${String(s.month).padStart(2, '0')}`;
-      const available = (parseFloat(s.el_earned) || 0) - (usageMap[key] || 0);
-      if (available > 0) {
-        pools.push({ key, label: `EL (${MONTH_NAMES[s.month]} ${s.year})`, available });
+    // Walk every month from March 2026 to current month
+    let yr = 2026, mo = 3;
+    const curYear = today.getFullYear(), curMonth = today.getMonth() + 1;
+
+    while (yr < curYear || (yr === curYear && mo <= curMonth)) {
+      const daysInMonth = new Date(yr, mo, 0).getDate();
+      let presentDays = 0;
+
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = `${yr}-${pad(mo)}-${pad(d)}`;
+        if (dateStr > todayStr) break; // never project future dates
+
+        const dayType = getDayType(dateStr);
+        const saved = recMap[dateStr];
+        // Unrecorded weekdays default to 'present'; weekends/holidays keep their type
+        const status = saved || (dayType === 'weekday' ? 'present' : dayType);
+
+        if (status === 'present' || status === 'saturday_working') presentDays++;
+        if (status === 'work_on_holiday') { presentDays++; wohTotal++; }
       }
+
+      const elEarned = Math.floor(presentDays / 20);
+      if (elEarned > 0) {
+        const key = `el_${yr}_${pad(mo)}`;
+        const available = elEarned - (usageMap[key] || 0);
+        pools.push({ key, label: `EL (${MONTH_NAMES[mo]} ${yr})`, available });
+      }
+
+      if (mo === 12) { yr++; mo = 1; } else mo++;
     }
 
-    if (wohEarned > 0) {
-      const wohAvail = wohEarned - (usageMap['work_on_holiday'] || 0);
-      if (wohAvail > 0) {
-        pools.push({ key: 'work_on_holiday', label: 'Work on Holiday', available: wohAvail });
-      }
+    // Work on Holiday compensatory pool
+    const wohAvail = wohTotal - (usageMap['work_on_holiday'] || 0);
+    if (wohTotal > 0) {
+      pools.push({ key: 'work_on_holiday', label: 'Work on Holiday', available: wohAvail });
     }
 
-    res.json({ pools, total: pools.reduce((s, p) => s + p.available, 0) });
+    res.json({ pools, total: pools.reduce((s, p) => s + Math.max(0, p.available), 0) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -110,7 +133,7 @@ router.get('/month/:employeeId/:year/:month', authMiddleware, async (req, res) =
       [employeeId, year, month]
     );
     const existingMap = {};
-    existing.forEach(r => { existingMap[r.date.toISOString().split('T')[0]] = r; });
+    existing.forEach(r => { existingMap[r.date] = r; }); // r.date is already 'YYYY-MM-DD' string (dateStrings:true)
 
     for (let d = 1; d <= daysInMonth; d++) {
       const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
@@ -156,7 +179,7 @@ router.post('/save', authMiddleware, async (req, res) => {
 
   const validStatuses = {
     saturday_leave: ['saturday_leave', 'saturday_working', 'work_on_holiday'],
-    saturday_working: ['saturday_working', 'saturday_leave', 'work_on_holiday'],
+    saturday_working: ['saturday_working', 'saturday_leave', 'work_on_holiday', 'leave'],
     weekday: ['present', 'leave', 'holiday', 'work_on_holiday', 'absent'],
   };
   const dayType = getDayType(date);
@@ -210,7 +233,7 @@ router.post('/bulk-save', authMiddleware, async (req, res) => {
       const validStatuses = {
         sunday: ['sunday'],
         saturday_leave: ['saturday_leave', 'saturday_working', 'work_on_holiday'],
-        saturday_working: ['saturday_working', 'saturday_leave', 'work_on_holiday'],
+        saturday_working: ['saturday_working', 'saturday_leave', 'work_on_holiday', 'leave'],
         weekday: ['present', 'leave', 'holiday', 'work_on_holiday', 'absent'],
       };
       if (!validStatuses[dayType]?.includes(record.status)) continue;
@@ -291,7 +314,7 @@ async function recalculateMonthlySummary(employeeId, year, month) {
   );
   
   const recordMap = {};
-  records.forEach(r => { recordMap[r.date.toISOString().split('T')[0]] = r.status; });
+  records.forEach(r => { recordMap[r.date] = r.status; }); // r.date is 'YYYY-MM-DD' string (dateStrings:true)
 
   let totalDays = daysInMonth;
   let sundays = 0, satLeave = 0, satWorking = 0, presentDays = 0;

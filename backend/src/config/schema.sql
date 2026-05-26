@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS employees (
   department VARCHAR(100),
   joining_date DATE,
   carry_forward DECIMAL(5,1) DEFAULT 0,
+  salary DECIMAL(12,2) DEFAULT 0,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

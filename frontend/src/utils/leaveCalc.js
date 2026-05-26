@@ -45,7 +45,7 @@ export function getAvailableStatuses(dateStr) {
     return ['saturday_leave', 'saturday_working', 'work_on_holiday'];
   }
   if (type === 'saturday_working') {
-    return ['saturday_working', 'saturday_leave', 'work_on_holiday'];
+    return ['saturday_working', 'saturday_leave', 'work_on_holiday', 'leave'];
   }
   // weekday
   return ['present', 'leave', 'holiday', 'work_on_holiday', 'absent'];

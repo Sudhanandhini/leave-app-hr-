@@ -17,12 +17,48 @@ function Modal({ title, onClose, children }) {
   );
 }
 
+const emptyForm = { name: '', email: '', password: '', department: '', joining_date: '', carry_forward: 0, salary: 0 };
+
+function formatINR(amount) {
+  const n = parseFloat(amount) || 0;
+  return '₹' + n.toLocaleString('en-IN', { maximumFractionDigits: 0 });
+}
+
+function FormFields({ form, setForm, isEdit }) {
+  return (
+    <div className="space-y-4">
+      {[
+        { label: 'Full Name',          key: 'name',          type: 'text',     required: true },
+        { label: 'Email',              key: 'email',         type: 'email',    required: true },
+        { label: 'Password',           key: 'password',      type: 'password', placeholder: isEdit ? 'Leave blank to keep' : '' },
+        { label: 'Department',         key: 'department',    type: 'text' },
+        { label: 'Joining Date',       key: 'joining_date',  type: 'date' },
+        { label: 'Monthly Salary (₹)', key: 'salary',        type: 'number',   min: 0 },
+        { label: 'Carry Forward Days', key: 'carry_forward', type: 'number',   min: 0 },
+      ].map(({ label, key, type, required, placeholder, min }) => (
+        <div key={key}>
+          <label className="block text-sm font-medium text-slate-700 mb-1">{label}</label>
+          <input
+            type={type}
+            value={form[key]}
+            onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+            required={required}
+            placeholder={placeholder}
+            min={min}
+            className="input-field"
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function AdminEmployees() {
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [editEmp, setEditEmp] = useState(null);
-  const [form, setForm] = useState({ name: '', email: '', password: '', department: '', joining_date: '', carry_forward: 0 });
+  const [form, setForm] = useState(emptyForm);
 
   useEffect(() => { loadEmployees(); }, []);
 
@@ -39,7 +75,7 @@ export default function AdminEmployees() {
       await api.post('/employees', form);
       toast.success('Employee added!');
       setShowAdd(false);
-      setForm({ name: '', email: '', password: '', department: '', joining_date: '', carry_forward: 0 });
+      setForm(emptyForm);
       loadEmployees();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed');
@@ -71,9 +107,13 @@ export default function AdminEmployees() {
   const openEdit = (emp) => {
     setEditEmp(emp);
     setForm({
-      name: emp.name, email: emp.email, password: '',
-      department: emp.department || '', joining_date: emp.joining_date?.split('T')[0] || '',
-      carry_forward: emp.carry_forward || 0
+      name: emp.name,
+      email: emp.email,
+      password: '',
+      department: emp.department || '',
+      joining_date: emp.joining_date?.split('T')[0] || '',
+      carry_forward: emp.carry_forward || 0,
+      salary: emp.salary || 0,
     });
   };
 
@@ -86,31 +126,6 @@ export default function AdminEmployees() {
       toast.error('Failed');
     }
   };
-
-  const FormFields = () => (
-    <div className="space-y-4">
-      {[
-        { label: 'Full Name', key: 'name', type: 'text', required: true },
-        { label: 'Email', key: 'email', type: 'email', required: true },
-        { label: 'Password', key: 'password', type: 'password', placeholder: editEmp ? 'Leave blank to keep' : '' },
-        { label: 'Department', key: 'department', type: 'text' },
-        { label: 'Joining Date', key: 'joining_date', type: 'date' },
-        { label: 'Carry Forward Days', key: 'carry_forward', type: 'number' },
-      ].map(({ label, key, type, required, placeholder }) => (
-        <div key={key}>
-          <label className="block text-sm font-medium text-slate-700 mb-1">{label}</label>
-          <input
-            type={type}
-            value={form[key]}
-            onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
-            required={required}
-            placeholder={placeholder}
-            className="input-field"
-          />
-        </div>
-      ))}
-    </div>
-  );
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-5">
@@ -131,11 +146,12 @@ export default function AdminEmployees() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-100">
               <tr>
-                <th className="px-4 py-3 text-left font-semibold text-slate-600">Employee</th>
-                <th className="px-4 py-3 text-left font-semibold text-slate-600">Department</th>
-                <th className="px-4 py-3 text-left font-semibold text-slate-600">Joining Date</th>
+                <th className="px-4 py-3 text-left   font-semibold text-slate-600">Employee</th>
+                <th className="px-4 py-3 text-left   font-semibold text-slate-600">Department</th>
+                <th className="px-4 py-3 text-left   font-semibold text-slate-600">Joining Date</th>
+                <th className="px-4 py-3 text-center font-semibold text-slate-600">Monthly Salary</th>
                 <th className="px-4 py-3 text-center font-semibold text-slate-600">Carry Forward</th>
-                <th className="px-4 py-3 text-right font-semibold text-slate-600">Actions</th>
+                <th className="px-4 py-3 text-right  font-semibold text-slate-600">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -154,6 +170,11 @@ export default function AdminEmployees() {
                   </td>
                   <td className="px-4 py-3 text-slate-600">{emp.department || '—'}</td>
                   <td className="px-4 py-3 text-slate-600">{emp.joining_date?.split('T')[0] || '—'}</td>
+                  <td className="px-4 py-3 text-center">
+                    <span className="inline-flex items-center px-3 py-1 bg-green-100 text-green-800 rounded-lg font-semibold text-sm font-mono">
+                      {formatINR(emp.salary)}
+                    </span>
+                  </td>
                   <td className="px-4 py-3 text-center">
                     <CFEditor value={emp.carry_forward || 0} onSave={val => updateCF(emp.id, val)} />
                   </td>
@@ -177,8 +198,8 @@ export default function AdminEmployees() {
       </div>
 
       {showAdd && (
-        <Modal title="Add Employee" onClose={() => setShowAdd(false)}>
-          <FormFields />
+        <Modal title="Add Employee" onClose={() => { setShowAdd(false); setForm(emptyForm); }}>
+          <FormFields form={form} setForm={setForm} isEdit={false} />
           <div className="flex gap-2 mt-6">
             <button onClick={handleAdd} className="btn-primary flex-1">Add Employee</button>
             <button onClick={() => setShowAdd(false)} className="btn-secondary">Cancel</button>
@@ -188,7 +209,7 @@ export default function AdminEmployees() {
 
       {editEmp && (
         <Modal title={`Edit — ${editEmp.name}`} onClose={() => setEditEmp(null)}>
-          <FormFields />
+          <FormFields form={form} setForm={setForm} isEdit={true} />
           <div className="flex gap-2 mt-6">
             <button onClick={handleEdit} className="btn-primary flex-1">Save Changes</button>
             <button onClick={() => setEditEmp(null)} className="btn-secondary">Cancel</button>

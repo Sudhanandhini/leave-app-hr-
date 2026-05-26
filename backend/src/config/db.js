@@ -7,6 +7,7 @@ const pool = mysql2.createPool({
   database: process.env.DB_NAME || 'leave_management',
   waitForConnections: true,
   connectionLimit: 10,
+  dateStrings: true, // Return DATE/DATETIME as 'YYYY-MM-DD' strings — avoids IST timezone shift via toISOString()
 });
 
 module.exports = pool;

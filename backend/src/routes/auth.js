@@ -23,7 +23,7 @@ router.post('/login', async (req, res) => {
 
     res.json({
       token,
-      user: { id: user.id, name: user.name, email: user.email, role: user.role, department: user.department, carry_forward: user.carry_forward }
+      user: { id: user.id, name: user.name, email: user.email, role: user.role, department: user.department, carry_forward: user.carry_forward, salary: user.salary || 0 }
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
