@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import api from '../utils/api';
 import { getDayType, getAvailableStatuses, STATUS_CONFIG, calculateMonthlyStats, getMonthName } from '../utils/leaveCalc';
-import { Save, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
+import { RefreshCw, ChevronLeft, ChevronRight, Loader2, CheckCircle2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -27,8 +27,8 @@ export default function AttendanceSheet({ employeeId, isAdmin = false }) {
   const [records, setRecords] = useState([]);
   const [employee, setEmployee] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [changedDates, setChangedDates] = useState(new Set());
+  const [savingDates, setSavingDates] = useState(new Set()); // dates currently being auto-saved
+  const [savedDates, setSavedDates] = useState(new Set());  // recently saved (shows ✓)
   const [cfPools, setCfPools] = useState([]);
   const [cfMonthlyPresent, setCfMonthlyPresent] = useState([]); // [{year,month,presentDays}]
 
@@ -94,45 +94,48 @@ export default function AttendanceSheet({ employeeId, isAdmin = false }) {
   useEffect(() => { loadAttendance(); }, [loadAttendance]);
   useEffect(() => { loadCfPools(); }, [loadCfPools]);
 
-  const updateStatus = (date, status) => {
-    setRecords(prev => prev.map(r =>
-      r.date === date
-        ? { ...r, status, leave_source: status === 'leave' ? r.leave_source : null }
-        : r
-    ));
-    setChangedDates(prev => new Set([...prev, date]));
+  const autoSave = useCallback(async (rec) => {
+    setSavingDates(prev => new Set([...prev, rec.date]));
+    setSavedDates(prev => { const s = new Set(prev); s.delete(rec.date); return s; });
+    try {
+      await api.post('/attendance/save', {
+        employee_id: employeeId,
+        date: rec.date,
+        status: rec.status,
+        notes: rec.notes || '',
+        leave_source: rec.status === 'leave' ? (rec.leave_source || null) : null,
+      });
+      await loadCfPools();
+      setSavedDates(prev => new Set([...prev, rec.date]));
+      // Clear the ✓ tick after 2s
+      setTimeout(() => setSavedDates(prev => {
+        const s = new Set(prev); s.delete(rec.date); return s;
+      }), 2000);
+    } catch {
+      toast.error('Auto-save failed');
+    } finally {
+      setSavingDates(prev => { const s = new Set(prev); s.delete(rec.date); return s; });
+    }
+  }, [employeeId, loadCfPools]);
+
+  const updateStatus = (date, newStatus) => {
+    setRecords(prev => {
+      const updated = prev.map(r =>
+        r.date === date
+          ? { ...r, status: newStatus, leave_source: newStatus === 'leave' ? r.leave_source : null }
+          : r
+      );
+      autoSave(updated.find(r => r.date === date));
+      return updated;
+    });
   };
 
   const updateLeaveSource = (date, source) => {
-    setRecords(prev => prev.map(r => r.date === date ? { ...r, leave_source: source } : r));
-    setChangedDates(prev => new Set([...prev, date]));
-  };
-
-  const saveAll = async () => {
-    if (changedDates.size === 0) return;
-    setSaving(true);
-    try {
-      const toSave = records
-        .filter(r => changedDates.has(r.date))
-        .map(r => ({
-          date: r.date,
-          status: r.status,
-          notes: r.notes || '',
-          leave_source: r.status === 'leave' ? (r.leave_source || null) : null,
-        }));
-      await api.post('/attendance/bulk-save', {
-        employee_id: employeeId,
-        year, month,
-        records: toSave,
-      });
-      toast.success('Attendance saved!');
-      setChangedDates(new Set());
-      await Promise.all([loadAttendance(), loadCfPools()]);
-    } catch (err) {
-      toast.error('Save failed');
-    } finally {
-      setSaving(false);
-    }
+    setRecords(prev => {
+      const updated = prev.map(r => r.date === date ? { ...r, leave_source: source } : r);
+      autoSave(updated.find(r => r.date === date));
+      return updated;
+    });
   };
 
   const prevMonth = () => {
@@ -146,22 +149,13 @@ export default function AttendanceSheet({ employeeId, isAdmin = false }) {
     else setMonth(m => m + 1);
   };
 
-  const dirty = changedDates.size > 0;
-
   // Sum of present days in all months BEFORE the currently viewed month (for cross-month counter)
   const priorPresentDays = cfMonthlyPresent
     .filter(m => m.year < year || (m.year === year && m.month < month))
     .reduce((sum, m) => sum + m.presentDays, 0);
 
-  // Compute real-time pool availability = saved pools minus any unsaved leave_source usages
-  const unsavedUsages = records
-    .filter(r => changedDates.has(r.date) && r.status === 'leave' && r.leave_source && r.leave_source !== 'unpaid')
-    .reduce((acc, r) => { acc[r.leave_source] = (acc[r.leave_source] || 0) + 1; return acc; }, {});
-
-  const currentPools = cfPools.map(pool => ({
-    ...pool,
-    available: pool.available - (unsavedUsages[pool.key] || 0),
-  }));
+  // Since auto-save keeps DB in sync, pool availability comes directly from cfPools
+  const currentPools = cfPools;
   const cfPoolsTotal = currentPools.reduce((s, p) => s + Math.max(0, p.available), 0);
 
   const stats = calculateMonthlyStats(records, daysInMonth);
@@ -192,31 +186,32 @@ export default function AttendanceSheet({ employeeId, isAdmin = false }) {
           </button>
         </div>
         <div className="flex items-center gap-2">
+          {savingDates.size > 0 && (
+            <span className="flex items-center gap-1.5 text-xs text-blue-600 font-medium">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving...
+            </span>
+          )}
           <button onClick={loadAttendance} className="btn-secondary flex items-center gap-1.5">
             <RefreshCw className="w-3.5 h-3.5" /> Refresh
           </button>
-          {dirty && (
-            <button onClick={saveAll} disabled={saving} className="btn-primary flex items-center gap-1.5">
-              <Save className="w-3.5 h-3.5" />
-              {saving ? 'Saving...' : 'Save Changes'}
-            </button>
-          )}
         </div>
       </div>
 
       {/* Stats row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
         {[
-          { label: 'Total Days', val: stats.totalDays, cls: 'bg-slate-100 text-slate-800' },
-          { label: 'Sundays', val: stats.sundays, cls: 'bg-yellow-100 text-yellow-800' },
-          { label: 'Sat (Leave)', val: stats.satLeave, cls: 'bg-yellow-100 text-yellow-800' },
-          { label: 'Present', val: stats.presentDays, cls: 'bg-green-100 text-green-800' },
-          { label: 'Leave', val: stats.leaveDays, cls: 'bg-red-100 text-red-800' },
-          { label: 'EL Earned', val: stats.elEarned, cls: 'bg-purple-100 text-purple-800' },
-        ].map(({ label, val, cls }) => (
+          { label: 'Total Days',    val: stats.totalDays,      cls: 'bg-slate-100 text-slate-800' },
+          { label: 'Sundays',       val: stats.sundays,        cls: 'bg-yellow-100 text-yellow-800' },
+          { label: 'Sat (Leave)',   val: stats.satLeave,       cls: 'bg-yellow-100 text-yellow-800' },
+          { label: 'Working Days',  val: stats.totalWorkingDays, cls: 'bg-indigo-100 text-indigo-800', sub: `${stats.totalDays}-(${stats.sundays}+${stats.satLeave})` },
+          { label: 'Present',       val: stats.presentDays,    cls: 'bg-green-100 text-green-800' },
+          { label: 'Leave',         val: stats.leaveDays,      cls: 'bg-red-100 text-red-800' },
+          { label: 'EL Earned',     val: stats.elEarned,       cls: 'bg-purple-100 text-purple-800' },
+        ].map(({ label, val, cls, sub }) => (
           <div key={label} className={`${cls} rounded-xl p-3 text-center`}>
             <div className="text-2xl font-display font-bold">{val}</div>
             <div className="text-xs font-medium mt-0.5 opacity-75">{label}</div>
+            {sub && <div className="text-xs opacity-50 mt-0.5 font-mono">{sub}</div>}
           </div>
         ))}
       </div>
@@ -313,7 +308,11 @@ export default function AttendanceSheet({ employeeId, isAdmin = false }) {
                       isElMilestone ? 'bg-green-50/40' : 'hover:bg-gray-50'
                     }`}>
                     <td className="px-3 py-2 font-mono text-slate-600 text-xs">
-                      {rec.date}
+                      <div className="flex items-center gap-1">
+                        {rec.date}
+                        {savingDates.has(rec.date) && <Loader2 className="w-3 h-3 text-blue-400 animate-spin flex-shrink-0" />}
+                        {!savingDates.has(rec.date) && savedDates.has(rec.date) && <CheckCircle2 className="w-3 h-3 text-green-500 flex-shrink-0" />}
+                      </div>
                     </td>
                     <td className="px-3 py-2">
                       <span className={`text-xs font-semibold ${

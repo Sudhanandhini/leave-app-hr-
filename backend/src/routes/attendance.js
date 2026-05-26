@@ -170,7 +170,7 @@ router.get('/month/:employeeId/:year/:month', authMiddleware, async (req, res) =
 
 // Save/update single attendance record
 router.post('/save', authMiddleware, async (req, res) => {
-  const { employee_id, date, status, notes } = req.body;
+  const { employee_id, date, status, notes, leave_source } = req.body;
 
   if (req.user.role !== 'admin' && req.user.id != employee_id) {
     return res.status(403).json({ error: 'Access denied' });
@@ -190,8 +190,9 @@ router.post('/save', authMiddleware, async (req, res) => {
     return res.status(400).json({ error: 'Invalid status for this day type' });
   }
 
+  const leaveSource = status === 'leave' ? (leave_source || null) : null;
+
   try {
-    // Check if record exists
     const [existing] = await db.query(
       'SELECT * FROM attendance WHERE employee_id = ? AND date = ?',
       [employee_id, date]
@@ -199,18 +200,18 @@ router.post('/save', authMiddleware, async (req, res) => {
 
     if (existing.length) {
       await db.query(
-        'UPDATE attendance SET status = ?, notes = ?, updated_at = NOW() WHERE employee_id = ? AND date = ?',
-        [status, notes || '', employee_id, date]
+        'UPDATE attendance SET status = ?, notes = ?, leave_source = ?, updated_at = NOW() WHERE employee_id = ? AND date = ?',
+        [status, notes || '', leaveSource, employee_id, date]
       );
     } else {
       await db.query(
-        'INSERT INTO attendance (employee_id, date, status, notes) VALUES (?, ?, ?, ?)',
-        [employee_id, date, status, notes || '']
+        'INSERT INTO attendance (employee_id, date, status, notes, leave_source) VALUES (?, ?, ?, ?, ?)',
+        [employee_id, date, status, notes || '', leaveSource]
       );
     }
 
-    // Recalculate monthly summary
-    await recalculateMonthlySummary(employee_id, new Date(date).getFullYear(), new Date(date).getMonth() + 1);
+    const [y, m] = date.split('-').map(Number);
+    await recalculateMonthlySummary(employee_id, y, m);
 
     res.json({ success: true });
   } catch (err) {

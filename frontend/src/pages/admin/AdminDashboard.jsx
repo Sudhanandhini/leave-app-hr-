@@ -136,6 +136,7 @@ export default function AdminDashboard() {
                 <tr>
                   <th className="px-4 py-3 text-left   font-semibold text-slate-600">Employee</th>
                   <th className="px-4 py-3 text-center font-semibold text-slate-600">Dept</th>
+                  <th className="px-4 py-3 text-center font-semibold text-slate-600">Working Days</th>
                   <th className="px-4 py-3 text-center font-semibold text-slate-600">Present</th>
                   <th className="px-4 py-3 text-center font-semibold text-slate-600">Leave</th>
                   <th className="px-4 py-3 text-center font-semibold text-slate-600">WoH</th>
@@ -148,15 +149,19 @@ export default function AdminDashboard() {
               <tbody>
                 {summaries.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-slate-400">
+                    <td colSpan={10} className="px-4 py-8 text-center text-slate-400">
                       No data for this period
                     </td>
                   </tr>
                 ) : summaries.map(({ employee, summary }) => {
-                  const leaveDays = summary?.leave_days || 0;
-                  const cfCovered = cfCoveredMap[employee.id] || 0;
-                  const cfAvail   = getCfTotal(employee.id);
-                  const deduct    = Math.max(0, leaveDays - cfCovered);
+                  const leaveDays   = summary?.leave_days || 0;
+                  const cfCovered   = cfCoveredMap[employee.id] || 0;
+                  const cfAvail     = getCfTotal(employee.id);
+                  const deduct      = Math.max(0, leaveDays - cfCovered);
+                  const totalDays   = summary?.total_days || 0;
+                  const sundays     = summary?.sundays || 0;
+                  const satLeave    = summary?.saturdays_leave || 0;
+                  const workingDays = totalDays - sundays - satLeave;
                   return (
                     <tr key={employee.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
                       <td className="px-4 py-3">
@@ -171,6 +176,15 @@ export default function AdminDashboard() {
                         </div>
                       </td>
                       <td className="px-4 py-3 text-center text-slate-600">{employee.department || '—'}</td>
+                      {/* Working Days */}
+                      <td className="px-4 py-3 text-center">
+                        <div className="flex flex-col items-center">
+                          <span className="inline-flex items-center justify-center w-8 h-8 bg-indigo-100 text-indigo-700 rounded-full font-semibold text-xs">
+                            {workingDays}
+                          </span>
+                          <span className="text-xs text-slate-400 mt-0.5 font-mono">{totalDays}-{sundays}-{satLeave}</span>
+                        </div>
+                      </td>
                       <td className="px-4 py-3 text-center">
                         <span className="inline-flex items-center justify-center w-8 h-8 bg-green-100 text-green-700 rounded-full font-semibold text-xs">
                           {summary?.present_days || 0}
