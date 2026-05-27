@@ -47,6 +47,7 @@ export default function AttendanceSheet({ employeeId, isAdmin = false }) {
 
   const loadAttendance = useCallback(async () => {
     setLoading(true);
+    const daysInMonth = new Date(year, month, 0).getDate();
     try {
       const res = await api.get(`/attendance/month/${employeeId}/${year}/${month}`);
       setEmployee(res.data.employee);
@@ -83,13 +84,12 @@ export default function AttendanceSheet({ employeeId, isAdmin = false }) {
         });
       }
       setRecords(full);
-      setChangedDates(new Set());
     } catch (err) {
       toast.error('Failed to load attendance');
     } finally {
       setLoading(false);
     }
-  }, [employeeId, year, month, daysInMonth]);
+  }, [employeeId, year, month]);
 
   useEffect(() => { loadAttendance(); }, [loadAttendance]);
   useEffect(() => { loadCfPools(); }, [loadCfPools]);
@@ -119,23 +119,19 @@ export default function AttendanceSheet({ employeeId, isAdmin = false }) {
   }, [employeeId, loadCfPools]);
 
   const updateStatus = (date, newStatus) => {
-    setRecords(prev => {
-      const updated = prev.map(r =>
-        r.date === date
-          ? { ...r, status: newStatus, leave_source: newStatus === 'leave' ? r.leave_source : null }
-          : r
-      );
-      autoSave(updated.find(r => r.date === date));
-      return updated;
-    });
+    const existing = records.find(r => r.date === date);
+    if (!existing) return;
+    const updatedRec = { ...existing, status: newStatus, leave_source: newStatus === 'leave' ? existing.leave_source : null };
+    setRecords(prev => prev.map(r => r.date === date ? updatedRec : r));
+    autoSave(updatedRec);
   };
 
   const updateLeaveSource = (date, source) => {
-    setRecords(prev => {
-      const updated = prev.map(r => r.date === date ? { ...r, leave_source: source } : r);
-      autoSave(updated.find(r => r.date === date));
-      return updated;
-    });
+    const existing = records.find(r => r.date === date);
+    if (!existing) return;
+    const updatedRec = { ...existing, leave_source: source };
+    setRecords(prev => prev.map(r => r.date === date ? updatedRec : r));
+    autoSave(updatedRec);
   };
 
   const prevMonth = () => {
