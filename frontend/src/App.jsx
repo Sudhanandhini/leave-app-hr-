@@ -26,11 +26,11 @@ function RootRedirect() {
 export default function App() {
   return (
     <AuthProvider>
-      <BrowserRouter>
+      <BrowserRouter basename="/attendance">
         <Toaster position="top-right" toastOptions={{
           style: { borderRadius: '12px', fontFamily: 'DM Sans, sans-serif', fontSize: '14px' }
         }} />
-        <Routes>
+        <Routes >
           <Route path="/login" element={<LoginPage />} />
           <Route path="/" element={<RootRedirect />} />
 
