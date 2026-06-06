@@ -102,13 +102,13 @@ export default function LoginPage() {
           </form>
 
           {/* Demo credentials */}
-          <div className="mt-6 pt-6 border-t border-white/10">
+          {/* <div className="mt-6 pt-6 border-t border-white/10">
             <p className="text-blue-300/60 text-xs text-center mb-3">Demo Credentials</p>
             <div className="grid grid-cols-2 gap-2 text-xs">
               <div className="bg-white/5 rounded-lg p-2">
                 <div className="text-blue-300 font-semibold mb-1">Admin</div>
-                <div className="text-white/60 font-mono">admin@company.com</div>
-                <div className="text-white/60 font-mono">password</div>
+                <div className="text-white/60 font-mono">support@sunsys.in</div>
+                <div className="text-white/60 font-mono">admin123</div>
               </div>
               <div className="bg-white/5 rounded-lg p-2">
                 <div className="text-green-300 font-semibold mb-1">Employee</div>
@@ -116,7 +116,7 @@ export default function LoginPage() {
                 <div className="text-white/60 font-mono">password</div>
               </div>
             </div>
-          </div>
+          </div> */}
         </div>
       </div>
     </div>

@@ -31,7 +31,7 @@ export const STATUS_CONFIG = {
   saturday_working: { label: 'Saturday (Work)',   color: 'bg-blue-100 text-blue-800 border-blue-200',     dot: 'bg-blue-400',   short: 'SW' },
   leave:            { label: 'Leave',             color: 'bg-red-100 text-red-800 border-red-200',        dot: 'bg-red-500',    short: 'L' },
   holiday:          { label: 'Holiday',           color: 'bg-purple-100 text-purple-800 border-purple-200', dot: 'bg-purple-400', short: 'H' },
-  work_on_holiday:  { label: 'Work on Holiday',   color: 'bg-teal-100 text-teal-800 border-teal-200',     dot: 'bg-teal-500',   short: 'WH' },
+  work_on_holiday:  { label: 'Work on Holiday',   color: 'bg-pink-100 text-pink-800 border-pink-200',     dot: 'bg-pink-500',   short: 'WH' },
   absent:           { label: 'Absent',            color: 'bg-gray-100 text-gray-800 border-gray-200',     dot: 'bg-gray-400',   short: 'A' },
 };
 
