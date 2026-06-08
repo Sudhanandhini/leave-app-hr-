@@ -308,6 +308,80 @@ router.get('/admin/monthly/:year/:month', authMiddleware, adminMiddleware, async
   }
 });
 
+// Employee clock in — mark today present with login time
+router.post('/checkin', authMiddleware, async (req, res) => {
+  if (req.user.role === 'admin') {
+    return res.status(403).json({ error: 'Admins cannot use clock-in' });
+  }
+  const employeeId = req.user.id;
+  const today = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const todayStr = `${today.getFullYear()}-${pad(today.getMonth()+1)}-${pad(today.getDate())}`;
+  const loginTime = `${pad(today.getHours())}:${pad(today.getMinutes())}:${pad(today.getSeconds())}`;
+
+  if (getDayType(todayStr) === 'sunday') {
+    return res.status(400).json({ error: 'Cannot clock in on Sunday' });
+  }
+
+  try {
+    const [existing] = await db.query(
+      'SELECT * FROM attendance WHERE employee_id = ? AND date = ?',
+      [employeeId, todayStr]
+    );
+    if (existing.length && existing[0].login_time) {
+      return res.status(400).json({ error: 'Already clocked in today' });
+    }
+    if (existing.length) {
+      await db.query(
+        'UPDATE attendance SET status = "present", login_time = ?, logout_time = NULL, updated_at = NOW() WHERE employee_id = ? AND date = ?',
+        [loginTime, employeeId, todayStr]
+      );
+    } else {
+      await db.query(
+        'INSERT INTO attendance (employee_id, date, status, login_time) VALUES (?, ?, "present", ?)',
+        [employeeId, todayStr, loginTime]
+      );
+    }
+    const [y, m] = todayStr.split('-').map(Number);
+    await recalculateMonthlySummary(employeeId, y, m);
+    res.json({ success: true, login_time: loginTime, date: todayStr });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Employee clock out — record logout time for today
+router.post('/checkout', authMiddleware, async (req, res) => {
+  if (req.user.role === 'admin') {
+    return res.status(403).json({ error: 'Admins cannot use clock-out' });
+  }
+  const employeeId = req.user.id;
+  const today = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const todayStr = `${today.getFullYear()}-${pad(today.getMonth()+1)}-${pad(today.getDate())}`;
+  const logoutTime = `${pad(today.getHours())}:${pad(today.getMinutes())}:${pad(today.getSeconds())}`;
+
+  try {
+    const [existing] = await db.query(
+      'SELECT * FROM attendance WHERE employee_id = ? AND date = ?',
+      [employeeId, todayStr]
+    );
+    if (!existing.length || existing[0].status !== 'present') {
+      return res.status(400).json({ error: 'Not clocked in today' });
+    }
+    if (existing[0].logout_time) {
+      return res.status(400).json({ error: 'Already clocked out today' });
+    }
+    await db.query(
+      'UPDATE attendance SET logout_time = ?, updated_at = NOW() WHERE employee_id = ? AND date = ?',
+      [logoutTime, employeeId, todayStr]
+    );
+    res.json({ success: true, logout_time: logoutTime, date: todayStr });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Helper: Calculate monthly summary with EL logic
 async function recalculateMonthlySummary(employeeId, year, month) {
   const daysInMonth = new Date(year, month, 0).getDate();

@@ -1,12 +1,21 @@
 import { useState, useEffect, useCallback } from 'react';
 import api from '../utils/api';
 import { getDayType, getAvailableStatuses, STATUS_CONFIG, calculateMonthlyStats, getMonthName } from '../utils/leaveCalc';
-import { RefreshCw, ChevronLeft, ChevronRight, Loader2, CheckCircle2 } from 'lucide-react';
+import { RefreshCw, ChevronLeft, ChevronRight, Loader2, CheckCircle2, LogIn, LogOut } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MIN_YEAR = 2026;
 const MIN_MONTH = 3; // March 2026 — attendance tracking start
+
+function formatTime(timeStr) {
+  if (!timeStr) return '';
+  const [h, m] = timeStr.split(':');
+  const hour = parseInt(h, 10);
+  const ampm = hour >= 12 ? 'PM' : 'AM';
+  const h12 = hour % 12 || 12;
+  return `${h12}:${m} ${ampm}`;
+}
 
 function StatusBadge({ status }) {
   const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.present;
@@ -66,15 +75,20 @@ export default function AttendanceSheet({ employeeId, isAdmin = false }) {
         const availableStatuses = getAvailableStatuses(dateStr);
         // If DB status is incompatible with the day type, fall back to computed default
         const isCompatible = dbRec?.status && availableStatuses.includes(dbRec.status);
+        // For employee view, today defaults to 'absent' (must click Clock In); all other days default to 'present'
+        const isToday = dateStr === todayStr;
+        const weekdayDefault = (!isAdmin && isToday) ? 'absent' : 'present';
         const status = isCompatible
           ? dbRec.status
-          : (defaultType === 'weekday' ? 'present' : defaultType);
+          : (defaultType === 'weekday' ? weekdayDefault : defaultType);
         // Only carry leave_source when status is actually 'leave'
         const leaveSource = (isCompatible && status === 'leave') ? (dbRec?.leave_source || null) : null;
         full.push({
           ...(dbRec || {}),
           date: dateStr,
           status,
+          login_time: dbRec?.login_time || null,
+          logout_time: dbRec?.logout_time || null,
           leave_source: leaveSource,
           notes: dbRec?.notes || '',
           dayName: DAY_NAMES[date.getDay()],
@@ -117,6 +131,27 @@ export default function AttendanceSheet({ employeeId, isAdmin = false }) {
       setSavingDates(prev => { const s = new Set(prev); s.delete(rec.date); return s; });
     }
   }, [employeeId, loadCfPools]);
+
+  const handleCheckIn = useCallback(async () => {
+    try {
+      await api.post('/attendance/checkin');
+      await loadAttendance();
+      await loadCfPools();
+      toast.success('Clocked in!');
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Clock in failed');
+    }
+  }, [loadAttendance, loadCfPools]);
+
+  const handleCheckOut = useCallback(async () => {
+    try {
+      await api.post('/attendance/checkout');
+      await loadAttendance();
+      toast.success('Clocked out!');
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Clock out failed');
+    }
+  }, [loadAttendance]);
 
   const updateStatus = (date, newStatus) => {
     const existing = records.find(r => r.date === date);
@@ -277,7 +312,10 @@ export default function AttendanceSheet({ employeeId, isAdmin = false }) {
               {records.map((rec, idx) => {
                 const isFuture = rec.date > todayStr;
                 const availableStatuses = getAvailableStatuses(rec.date);
-                const isReadOnly = isFuture || rec.status === 'sunday' || availableStatuses.length === 1;
+                const isToday = rec.date === todayStr;
+                // Employee view for today on a working day → use Clock In/Out buttons instead of dropdown
+                const isClockInRow = !isAdmin && isToday && !['sunday', 'saturday_leave'].includes(rec.defaultType);
+                const isReadOnly = !isClockInRow && (isFuture || rec.status === 'sunday' || availableStatuses.length === 1);
                 const monthPresentCount = records.slice(0, idx + 1).filter(r =>
                   ['present', 'saturday_working', 'work_on_holiday'].includes(r.status)
                 ).length;
@@ -318,10 +356,48 @@ export default function AttendanceSheet({ employeeId, isAdmin = false }) {
                     </td>
                     <td className="px-3 py-2">
                       <div className="flex flex-col gap-1">
-                        {/* Status selector */}
-                        {isReadOnly ? (
+
+                        {/* Clock In / Out UI — today only, employee view */}
+                        {isClockInRow ? (
+                          <div className="flex flex-col gap-1.5">
+                            {!rec.login_time ? (
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <StatusBadge status="absent" />
+                                <button
+                                  onClick={handleCheckIn}
+                                  className="inline-flex items-center gap-1 px-3 py-1 bg-green-600 text-white text-xs font-semibold rounded-lg hover:bg-green-700 transition-colors"
+                                >
+                                  <LogIn className="w-3 h-3" /> Clock In
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex flex-col gap-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <StatusBadge status="present" />
+                                  <span className="text-xs text-green-700 font-medium bg-green-50 border border-green-200 rounded px-1.5 py-0.5">
+                                    ↗ Login: {formatTime(rec.login_time)}
+                                  </span>
+                                </div>
+                                {!rec.logout_time ? (
+                                  <button
+                                    onClick={handleCheckOut}
+                                    className="inline-flex items-center gap-1 px-3 py-1 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 transition-colors w-fit"
+                                  >
+                                    <LogOut className="w-3 h-3" /> Clock Out
+                                  </button>
+                                ) : (
+                                  <span className="text-xs text-blue-700 font-medium bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5 w-fit">
+                                    ↙ Logout: {formatTime(rec.logout_time)}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        ) : isReadOnly ? (
+                          /* Read-only status badge */
                           <StatusBadge status={rec.status} />
                         ) : (
+                          /* Status dropdown */
                           <select
                             value={rec.status}
                             onChange={e => updateStatus(rec.date, e.target.value)}
@@ -335,8 +411,24 @@ export default function AttendanceSheet({ employeeId, isAdmin = false }) {
                           </select>
                         )}
 
+                        {/* Login / Logout times for non-today rows */}
+                        {!isClockInRow && (rec.login_time || rec.logout_time) && (
+                          <div className="flex gap-2 flex-wrap">
+                            {rec.login_time && (
+                              <span className="text-xs text-green-700 font-medium bg-green-50 border border-green-200 rounded px-1.5 py-0.5">
+                                ↗ {formatTime(rec.login_time)}
+                              </span>
+                            )}
+                            {rec.logout_time && (
+                              <span className="text-xs text-blue-700 font-medium bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5">
+                                ↙ {formatTime(rec.logout_time)}
+                              </span>
+                            )}
+                          </div>
+                        )}
+
                         {/* Leave source picker — shown only when status = leave and editable */}
-                        {!isReadOnly && rec.status === 'leave' && (
+                        {!isReadOnly && !isClockInRow && rec.status === 'leave' && (
                           <select
                             value={rec.leave_source || ''}
                             onChange={e => updateLeaveSource(rec.date, e.target.value || null)}

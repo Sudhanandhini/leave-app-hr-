@@ -61,12 +61,12 @@ export default function EmployeeDashboard() {
           <span>{user?.department}</span>
           <span>•</span>
           <span>Carry Forward: <strong className="text-white">{cfTotal} days</strong></span>
-          {monthlySalary > 0 && (
+          {/* {monthlySalary > 0 && (
             <>
               <span>•</span>
               <span>Salary: <strong className="text-white">{formatINR(monthlySalary)}/mo</strong></span>
             </>
-          )}
+          )} */}
         </div>
       </div>
 
@@ -132,7 +132,7 @@ export default function EmployeeDashboard() {
       )}
 
       {/* Salary details card */}
-      {monthlySalary > 0 && (
+      {/* {monthlySalary > 0 && (
         <div className={`rounded-2xl p-5 border ${salaryDeductDays > 0 ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
           <div className="flex items-center gap-2 mb-4">
             <IndianRupee className={`w-4 h-4 ${salaryDeductDays > 0 ? 'text-red-600' : 'text-green-600'}`} />
@@ -142,7 +142,7 @@ export default function EmployeeDashboard() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            {/* Left: breakdown table */}
+         
             <div className="space-y-2 text-sm">
               <div className="flex justify-between text-slate-700">
                 <span>Monthly Gross Salary</span>
@@ -184,7 +184,7 @@ export default function EmployeeDashboard() {
               )}
             </div>
 
-            {/* Right: net salary highlight */}
+            
             <div className={`flex flex-col items-center justify-center rounded-xl p-4 ${
               salaryDeductDays > 0 ? 'bg-red-100 border border-red-200' : 'bg-green-100 border border-green-200'
             }`}>
@@ -212,9 +212,9 @@ export default function EmployeeDashboard() {
             <p className="text-green-700 text-xs">✓ No leave taken — full salary this month!</p>
           )}
         </div>
-      )}
+      )} */}
 
-      {/* Leave impact (shown only when no salary configured) */}
+{/*      
       {monthlySalary === 0 && leaveDays > 0 && (
         <div className={`rounded-2xl p-5 border ${salaryDeductDays > 0 ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
           <h3 className={`font-semibold mb-3 ${salaryDeductDays > 0 ? 'text-red-800' : 'text-green-800'}`}>
@@ -240,7 +240,7 @@ export default function EmployeeDashboard() {
             <p className="text-green-700 text-xs mt-2">✓ All leaves covered by carry forward — no salary deduction!</p>
           )}
         </div>
-      )}
+      )} */}
 
       {/* EL explanation */}
       <div className="card bg-gradient-to-br from-purple-50 to-indigo-50 border-purple-100">

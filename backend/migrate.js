@@ -14,6 +14,18 @@ async function migrate() {
       ADD COLUMN IF NOT EXISTS salary DECIMAL(12,2) DEFAULT 0
     `);
     console.log('Migration done: salary column added to employees table.');
+
+    await db.query(`
+      ALTER TABLE attendance
+      ADD COLUMN IF NOT EXISTS login_time TIME DEFAULT NULL
+    `);
+    console.log('Migration done: login_time column added to attendance table.');
+
+    await db.query(`
+      ALTER TABLE attendance
+      ADD COLUMN IF NOT EXISTS logout_time TIME DEFAULT NULL
+    `);
+    console.log('Migration done: logout_time column added to attendance table.');
   } catch (err) {
     console.error('Migration failed:', err.message);
   }
